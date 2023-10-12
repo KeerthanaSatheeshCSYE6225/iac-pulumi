@@ -1,0 +1,3 @@
+name: iac-pulumi1
+runtime: nodejs
+description: A minimal AWS TypeScript Pulumi program
