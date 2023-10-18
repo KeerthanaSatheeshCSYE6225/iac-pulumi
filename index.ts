@@ -14,6 +14,8 @@ const region = awsConfig.require("region") as aws.Region;
 // Get other configurations
 const vpcCidrBlock = config.require("vpcCidrBlock");
 
+const amiInstance = config.require("amiInstance");
+
 // Configure AWS provider with the specified region
 const provider = new aws.Provider("provider", {
   region: region,
@@ -42,7 +44,9 @@ const subnets = azs.apply((azs) =>
       `publicSubnet-${index}`,
       {
         vpcId: vpc.id,
-        cidrBlock: `10.0.${index * 2}.0/24`,
+        cidrBlock: `${vpcCidrBlock.split(".")[0]}.${
+          vpcCidrBlock.split(".")[1]
+        }.${index * 2}.0/24`,
         availabilityZone: az,
         mapPublicIpOnLaunch: true,
         tags: {
@@ -56,7 +60,9 @@ const subnets = azs.apply((azs) =>
       `privateSubnet-${index}`,
       {
         vpcId: vpc.id,
-        cidrBlock: `10.0.${index * 2 + 1}.0/24`,
+        cidrBlock: `${vpcCidrBlock.split(".")[0]}.${
+          vpcCidrBlock.split(".")[1]
+        }.${index * 2 + 1}.0/24`,
         availabilityZone: az,
         mapPublicIpOnLaunch: false,
         tags: {
@@ -150,6 +156,66 @@ subnets.apply((subnetArray) =>
     )
 );
 
+// Create an application security group
+const applicationSecurityGroup = new aws.ec2.SecurityGroup(
+  "applicationSecurityGroup",
+  {
+    name: "applicationSecurityGroup",
+    description: "Security group for EC2 instances hosting web applications",
+    ingress: [
+      {
+        fromPort: 22,
+        toPort: 22,
+        protocol: "tcp",
+        cidrBlocks: ["0.0.0.0/0"],
+      },
+      {
+        fromPort: 80,
+        toPort: 80,
+        protocol: "tcp",
+        cidrBlocks: ["0.0.0.0/0"],
+      },
+      {
+        fromPort: 443,
+        toPort: 443,
+        protocol: "tcp",
+        cidrBlocks: ["0.0.0.0/0"],
+      },
+      {
+        fromPort: 8080,
+        toPort: 8080,
+        protocol: "tcp",
+        cidrBlocks: ["0.0.0.0/0"],
+      },
+    ],
+  },
+  { provider }
+);
+
+// Create an EC2 instance
+const ec2Instance = new aws.ec2.Instance(
+  "ec2Instance",
+  {
+    ami: amiInstance,
+    instanceType: "t2.micro",
+    vpcSecurityGroupIds: [applicationSecurityGroup.id],
+    rootBlockDevice: {
+      volumeSize: 25,
+      volumeType: "gp2",
+      deleteOnTermination: true,
+    },
+    ebsBlockDevices: [
+      {
+        deviceName: "/dev/sda1",
+        volumeSize: 25,
+        volumeType: "gp2",
+        deleteOnTermination: true,
+      },
+    ],
+  },
+  { provider }
+);
+
 // Export the IDs of the resources created
 export const vpcId = vpc.id;
 export const publicSubnetIds = subnets.apply((subnets) =>
@@ -161,3 +227,5 @@ export const privateSubnetIds = subnets.apply((subnets) =>
 export const internetGatewayId = internetGateway.id;
 export const publicRouteTableId = publicRouteTable.id;
 export const privateRouteTableId = privateRouteTable.id;
+export const applicationSecurityGroupId = applicationSecurityGroup.id;
+export const ec2InstanceId = ec2Instance.id;
