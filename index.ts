@@ -16,6 +16,8 @@ const vpcCidrBlock = config.require("vpcCidrBlock");
 
 const amiInstance = config.require("amiInstance");
 
+const publicSubnet = {};
+
 // Configure AWS provider with the specified region
 const provider = new aws.Provider("provider", {
   region: region,
@@ -162,6 +164,8 @@ const applicationSecurityGroup = new aws.ec2.SecurityGroup(
   {
     name: "applicationSecurityGroup",
     description: "Security group for EC2 instances hosting web applications",
+    vpcId: vpc.id,
+
     ingress: [
       {
         fromPort: 22,
@@ -192,26 +196,31 @@ const applicationSecurityGroup = new aws.ec2.SecurityGroup(
   { provider }
 );
 
+const firstPublicSubnet = subnets[0].id;
+
 // Create an EC2 instance
 const ec2Instance = new aws.ec2.Instance(
   "ec2Instance",
   {
     ami: amiInstance,
     instanceType: "t2.micro",
+    keyName: "awsDevKey",
     vpcSecurityGroupIds: [applicationSecurityGroup.id],
+    subnetId: firstPublicSubnet,
+
     rootBlockDevice: {
       volumeSize: 25,
       volumeType: "gp2",
       deleteOnTermination: true,
     },
-    ebsBlockDevices: [
-      {
-        deviceName: "/dev/sda1",
-        volumeSize: 25,
-        volumeType: "gp2",
-        deleteOnTermination: true,
-      },
-    ],
+    // ebsBlockDevices: [
+    //   {
+    //     deviceName: "/dev/sda1",
+    //     volumeSize: 25,
+    //     volumeType: "gp2",
+    //     deleteOnTermination: true,
+    //   },
+    // ],
   },
   { provider }
 );
