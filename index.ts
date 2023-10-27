@@ -22,6 +22,7 @@ const dbPassword = config.require("dbPassword");
 const rdsUser = config.require("rdsUser");
 const rdsIdentifier = config.require("rdsIdentifier");
 
+
 const keyPem = config.require("keyPem");
 const dialect = "mysql";
 const port = 3306;
@@ -271,6 +272,7 @@ const rdsInstance = new aws.rds.Instance("csye6225-rds-instance", {
   vpcSecurityGroupIds: [dbSecurityGroup.id],
   identifier: rdsIdentifier,
 });
+
 
 const ec2Instance = new aws.ec2.Instance(
   "ec2Instance",
