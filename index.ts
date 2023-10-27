@@ -17,6 +17,11 @@ const vpcCidrBlock = config.require("vpcCidrBlock");
 
 const amiInstance = config.require("amiInstance");
 
+const dbName = config.require("dbName");
+const dbPassword = config.require("dbPassword");
+const rdsUser = config.require("rdsUser");
+const rdsIdentifier = config.require("rdsIdentifier");
+
 const keyPem = config.require("keyPem");
 const dialect = "mysql";
 const port = 3306;
@@ -194,6 +199,14 @@ const applicationSecurityGroup = new aws.ec2.SecurityGroup(
         cidrBlocks: ["0.0.0.0/0"],
       },
     ],
+    egress: [
+      {
+        protocol: "all",
+        fromPort: 0,
+        toPort: 0,
+        cidrBlocks: ["0.0.0.0/0"],
+      },
+    ],
   },
   { provider }
 );
@@ -215,9 +228,9 @@ const dbSecurityGroup = new aws.ec2.SecurityGroup("database-security-group", {
   ],
   egress: [
     {
-      protocol: "tcp",
+      protocol: "all",
       fromPort: 0,
-      toPort: 65535,
+      toPort: 0,
       cidrBlocks: ["0.0.0.0/0"],
     },
   ],
@@ -252,21 +265,12 @@ const rdsInstance = new aws.rds.Instance("csye6225-rds-instance", {
   parameterGroupName: rdsParameterGroup.name,
   skipFinalSnapshot: true,
   publiclyAccessible: false,
-  // name: "csye6225",
-  username: "csye6225",
-  password: "Kavu1234",
-  dbName: "csye6225",
+  username: rdsUser,
+  password: dbPassword,
+  dbName: dbName,
   vpcSecurityGroupIds: [dbSecurityGroup.id],
-  identifier: "csye6225-rds-instance",
+  identifier: rdsIdentifier,
 });
-
-// // User Data
-// const userData = pulumi.all([rdsInstance.endpoint]).apply(
-//   ([endpoint]) => `#!/bin/bash
-// echo "DB_USERNAME=csye6225" >> /etc/environment
-// echo "DB_PASSWORD=yourStrongPassword" >> /etc/environment
-// echo "DB_HOSTNAME=${endpoint}" >> /etc/environment`
-// );
 
 const ec2Instance = new aws.ec2.Instance(
   "ec2Instance",
@@ -282,13 +286,13 @@ const ec2Instance = new aws.ec2.Instance(
       deleteOnTermination: true,
     },
     userData: pulumi.interpolate`#!/bin/bash
-    sudo echo "MYSQL_HOST=${rdsInstance.address}" | sudo tee /home/admin/webapp/.env
-    sudo echo "MYSQL_USER='${rdsInstance.username}'" | sudo tee -a /home/admin/webapp/.env
-    sudo echo "MYSQL_PASSWORD='${rdsInstance.password}'" | sudo tee -a /home/admin/webapp/.env
-    sudo echo "MYSQL_DATABASE='${rdsInstance.dbName}'" | sudo tee -a /home/admin/webapp/.env
-    sudo echo "MYSQL_DIALECT='${dialect}'" | sudo tee -a /home/admin/webapp/.env
-    echo 'Hello from the new EC2 instance';
-`,
+                sudo sh -c 'echo "HOST=${rdsInstance.address}" >> /opt/csye6225/webapp/.env'
+                sudo sh -c 'echo "USER=${rdsInstance.username}" >> /opt/csye6225/webapp/.env'
+                sudo sh -c 'echo "PASSWORD=${rdsInstance.password}" >> /opt/csye6225/webapp/.env'
+                sudo sh -c 'echo "DB=${rdsInstance.dbName}" >> /opt/csye6225/webapp/.env'
+                sudo systemctl enable mariadb
+                sudo systemctl start mariadb
+                sudo systemctl daemon-reload`,
   },
   { provider }
 );
