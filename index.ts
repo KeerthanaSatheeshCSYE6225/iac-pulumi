@@ -278,6 +278,7 @@ const rdsInstance = new aws.rds.Instance("csye6225-rds-instance", {
   identifier: rdsIdentifier,
 });
 
+
 const ec2Role = new aws.iam.Role("ec2Role", {
   assumeRolePolicy: JSON.stringify({
     Version: "2012-10-17",
