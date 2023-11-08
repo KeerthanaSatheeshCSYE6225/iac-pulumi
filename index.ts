@@ -1,10 +1,12 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
+import * as route53 from "@pulumi/aws/route53";
 import { Tag } from "@pulumi/aws/ec2";
 
 // Load configurations
 const config = new pulumi.Config("pulumicloud");
 const awsConfig = new pulumi.Config("aws");
+const domain_name = "keerthanadevhub.me";
 
 // Get the AWS profile from the config
 const awsProfile = awsConfig.require("profile");
@@ -23,9 +25,13 @@ const rdsUser = config.require("rdsUser");
 const rdsIdentifier = config.require("rdsIdentifier");
 
 const keyPem = config.require("keyPem");
-const dialect = "mysql";
-const port = 3306;
-const publicSubnet = {};
+// Load Route 53 configuration
+//const domainName = config.require("domainName");
+//const hostedZoneId = config.require("hostedZoneId");
+// const appPort = config.requireNumber("appPort");
+const appPort = 8080;
+const domainName = "keerthanadevhub.me";
+
 // Configure AWS provider with the specified region
 const provider = new aws.Provider("provider", {
   region: region,
@@ -272,6 +278,37 @@ const rdsInstance = new aws.rds.Instance("csye6225-rds-instance", {
   identifier: rdsIdentifier,
 });
 
+const ec2Role = new aws.iam.Role("ec2Role", {
+  assumeRolePolicy: JSON.stringify({
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Action: "sts:AssumeRole",
+        Effect: "Allow",
+        Principal: {
+          Service: "ec2.amazonaws.com",
+        },
+      },
+    ],
+  }),
+});
+
+const cloudWatchAgentServerPolicy = aws.iam.getPolicy({
+  arn: "arn:aws:iam::aws:policy/CloudwatchAgentServerPolicy",
+});
+
+const policyAttachment = cloudWatchAgentServerPolicy.then((policy) => {
+  return new aws.iam.PolicyAttachment("cloudWatchAgentServerPolicyAttachment", {
+    policyArn: policy.arn,
+    roles: [ec2Role.name],
+  });
+});
+
+const ec2InstanceProfile = new aws.iam.InstanceProfile("ec2InstanceProfile", {
+  name: "ec2InstanceProfile",
+  role: ec2Role.name,
+});
+
 const ec2Instance = new aws.ec2.Instance(
   "ec2Instance",
   {
@@ -285,14 +322,44 @@ const ec2Instance = new aws.ec2.Instance(
       volumeType: "gp2",
       deleteOnTermination: true,
     },
+    iamInstanceProfile: ec2InstanceProfile.id,
     userData: pulumi.interpolate`#!/bin/bash
                 sudo sh -c 'echo "HOST=${rdsInstance.address}" >> /opt/csye6225/webapp/.env'
                 sudo sh -c 'echo "USER=${rdsInstance.username}" >> /opt/csye6225/webapp/.env'
                 sudo sh -c 'echo "PASSWORD=${rdsInstance.password}" >> /opt/csye6225/webapp/.env'
                 sudo sh -c 'echo "DB=${rdsInstance.dbName}" >> /opt/csye6225/webapp/.env'
-                sudo systemctl enable mariadb
-                sudo systemctl start mariadb
-                sudo systemctl daemon-reload`,
+                sudo systemctl daemon-reload
+                sudo systemctl enable webapp
+                sudo systemctl start webapp
+                sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+                  -a fetch-config \
+                  -m ec2 \
+                  -c file:/opt/aws/amazon-cloudwatch-agent/etc/cloudwatch-config.json \
+                  -s`,
+  },
+  { provider }
+);
+
+const eip = new aws.ec2.Eip("myEip", {
+  instance: ec2Instance.id.apply((id) => id),
+});
+
+const eipAssociation = new aws.ec2.EipAssociation("eipAssociation", {
+  instanceId: ec2Instance.id,
+  allocationId: eip.id,
+});
+
+// Create or update the Route53 A Record to point the domain to the EC2 instance's public IP
+const aRecord = new aws.route53.Record(
+  "app-A-record",
+  {
+    //zoneId: hostedZoneId,
+    zoneId: "Z054378389O5KRBMZRN7",
+    //name: domainName,
+    name: "demo.keerthanadevhub.me",
+    type: "A",
+    ttl: 300,
+    records: [eipAssociation.publicIp],
   },
   { provider }
 );
@@ -312,3 +379,4 @@ export const applicationSecurityGroupId = applicationSecurityGroup.id;
 
 export const rdsInstanceId = rdsInstance.id;
 export const ec2InstanceId = ec2Instance.id;
+export const appUrl = pulumi.interpolate`http://${domainName}:${appPort}/`;
