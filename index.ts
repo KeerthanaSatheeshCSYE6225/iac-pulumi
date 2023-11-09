@@ -26,10 +26,12 @@ const rdsIdentifier = config.require("rdsIdentifier");
 
 const keyPem = config.require("keyPem");
 // Load Route 53 configuration
+
 const domainName = config.require("domainName");
 const hostedZoneId = config.require("hostedZoneId");
 // const appPort = config.requireNumber("appPort");
 const appPort = 8080;
+
 
 // Configure AWS provider with the specified region
 const provider = new aws.Provider("provider", {
@@ -276,6 +278,7 @@ const rdsInstance = new aws.rds.Instance("csye6225-rds-instance", {
   vpcSecurityGroupIds: [dbSecurityGroup.id],
   identifier: rdsIdentifier,
 });
+
 
 const ec2Role = new aws.iam.Role("ec2Role", {
   assumeRolePolicy: JSON.stringify({
