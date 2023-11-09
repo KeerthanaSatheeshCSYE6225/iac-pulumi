@@ -26,11 +26,10 @@ const rdsIdentifier = config.require("rdsIdentifier");
 
 const keyPem = config.require("keyPem");
 // Load Route 53 configuration
-//const domainName = config.require("domainName");
-//const hostedZoneId = config.require("hostedZoneId");
+const domainName = config.require("domainName");
+const hostedZoneId = config.require("hostedZoneId");
 // const appPort = config.requireNumber("appPort");
 const appPort = 8080;
-const domainName = "keerthanadevhub.me";
 
 // Configure AWS provider with the specified region
 const provider = new aws.Provider("provider", {
@@ -353,10 +352,8 @@ const eipAssociation = new aws.ec2.EipAssociation("eipAssociation", {
 const aRecord = new aws.route53.Record(
   "app-A-record",
   {
-    //zoneId: hostedZoneId,
-    zoneId: "Z054378389O5KRBMZRN7",
-    //name: domainName,
-    name: "demo.keerthanadevhub.me",
+    zoneId: hostedZoneId,
+    name: domainName,
     type: "A",
     ttl: 300,
     records: [eipAssociation.publicIp],
