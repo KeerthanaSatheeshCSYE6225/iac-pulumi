@@ -32,7 +32,6 @@ const hostedZoneId = config.require("hostedZoneId");
 // const appPort = config.requireNumber("appPort");
 const appPort = 8080;
 
-
 // Configure AWS provider with the specified region
 const provider = new aws.Provider("provider", {
   region: region,
@@ -172,21 +171,15 @@ subnets.apply((subnetArray) =>
       )
     )
 );
-
-// Create an application security group
-const applicationSecurityGroup = new aws.ec2.SecurityGroup(
-  "applicationSecurityGroup",
+// Create Load Balancer Security Group
+const loadBalancerSecurityGroup = new aws.ec2.SecurityGroup(
+  "loadBalancerSecurityGroup",
   {
-    name: "applicationSecurityGroup",
-    description: "Security group for EC2 instances hosting web applications",
+    name: "loadBalancerSecurityGroup",
+    description:
+      "Security group for the load balancer to access the web application",
     vpcId: vpc.id,
     ingress: [
-      {
-        fromPort: 22,
-        toPort: 22,
-        protocol: "tcp",
-        cidrBlocks: ["0.0.0.0/0"],
-      },
       {
         fromPort: 80,
         toPort: 80,
@@ -196,12 +189,6 @@ const applicationSecurityGroup = new aws.ec2.SecurityGroup(
       {
         fromPort: 443,
         toPort: 443,
-        protocol: "tcp",
-        cidrBlocks: ["0.0.0.0/0"],
-      },
-      {
-        fromPort: 8080,
-        toPort: 8080,
         protocol: "tcp",
         cidrBlocks: ["0.0.0.0/0"],
       },
@@ -217,8 +204,43 @@ const applicationSecurityGroup = new aws.ec2.SecurityGroup(
   },
   { provider }
 );
-const firstPublicSubnet = subnets[0].id;
 
+// Update App Security Group to allow access from Load Balancer Security Group
+const applicationSecurityGroup = new aws.ec2.SecurityGroup(
+  "applicationSecurityGroup",
+  {
+    name: "applicationSecurityGroup",
+    description: "Security group for EC2 instances hosting web applications",
+    vpcId: vpc.id,
+    ingress: [
+      {
+        fromPort: 22,
+        toPort: 22,
+        protocol: "tcp",
+        cidrBlocks: ["0.0.0.0/0"], // Allow access from Load Balancer SG
+      },
+      {
+        fromPort: appPort,
+        toPort: appPort,
+        protocol: "tcp",
+        securityGroups: [loadBalancerSecurityGroup.id], // Allow access from Load Balancer SG
+      },
+    ],
+    egress: [
+      {
+        protocol: "all",
+        fromPort: 0,
+        toPort: 0,
+        cidrBlocks: ["0.0.0.0/0"],
+      },
+    ],
+  },
+  { provider }
+);
+const firstPublicSubnet = subnets[0].id;
+export const publicSubnetIds = subnets.apply((subnets) =>
+  subnets.filter((_, index) => index % 2 === 0).map((subnet) => subnet.id)
+);
 // Create an EC2 instance
 
 // Create DB Security Group
@@ -279,7 +301,6 @@ const rdsInstance = new aws.rds.Instance("csye6225-rds-instance", {
   identifier: rdsIdentifier,
 });
 
-
 const ec2Role = new aws.iam.Role("ec2Role", {
   assumeRolePolicy: JSON.stringify({
     Version: "2012-10-17",
@@ -337,7 +358,10 @@ const ec2Instance = new aws.ec2.Instance(
                   -a fetch-config \
                   -m ec2 \
                   -c file:/opt/aws/amazon-cloudwatch-agent/etc/cloudwatch-config.json \
-                  -s`,
+                  -s
+                  sudo systemctl enable amazon-cloudwatch-agent
+                  sudo systemctl start amazon-cloudwatch-agent
+                  sudo systemctl daemon-reload`,
   },
   { provider }
 );
@@ -351,24 +375,254 @@ const eipAssociation = new aws.ec2.EipAssociation("eipAssociation", {
   allocationId: eip.id,
 });
 
-// Create or update the Route53 A Record to point the domain to the EC2 instance's public IP
-const aRecord = new aws.route53.Record(
-  "app-A-record",
+// // Create or update the Route53 A Record to point the domain to the EC2 instance's public IP
+// const aRecord = new aws.route53.Record(
+//   "app-A-record",
+//   {
+//     zoneId: hostedZoneId,
+//     name: domainName,
+//     type: "A",
+//     ttl: 300,
+//     records: [eipAssociation.publicIp],
+//   },
+//   { provider }
+// );
+
+// // Create IAM Policy
+// const lbScalingPolicy = new aws.iam.Policy("lbScalingPolicy", {
+//   description: "IAM policy for load balancer scaling",
+//   policy: JSON.stringify({
+//     Version: "2012-10-17",
+//     Statement: [
+//       {
+//         Effect: "Allow",
+//         Action: [
+//           "elasticloadbalancing:Describe*",
+//           "elasticloadbalancing:RegisterTargets",
+//           "elasticloadbalancing:DeregisterTargets",
+//           "elasticloadbalancing:DescribeTargetHealth",
+//         ],
+//         Resource: "*",
+//       },
+//       // Add more specific statements if required
+//     ],
+//   }),
+// });
+
+// // Attach IAM Policy to the Role
+// const policyAttachments = new aws.iam.PolicyAttachment(
+//   "lbScalingPolicyAttachment",
+//   {
+//     policyArn: lbScalingPolicy.arn,
+//     roles: [ec2Role.name], // Attach to the desired role
+//   }
+// );
+
+// Your user data script
+const userDataScript = pulumi.interpolate`#!/bin/bash
+sudo sh -c 'echo "HOST=${rdsInstance.address}" >> /opt/csye6225/webapp/.env'
+sudo sh -c 'echo "USER=${rdsInstance.username}" >> /opt/csye6225/webapp/.env'
+sudo sh -c 'echo "PASSWORD=${rdsInstance.password}" >> /opt/csye6225/webapp/.env'
+sudo sh -c 'echo "DB=${rdsInstance.dbName}" >> /opt/csye6225/webapp/.env'
+sudo systemctl daemon-reload
+sudo systemctl enable webapp
+sudo systemctl start webapp
+sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config \
+  -m ec2 \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/cloudwatch-config.json \
+  -s
+  sudo systemctl enable amazon-cloudwatch-agent
+  sudo systemctl start amazon-cloudwatch-agent
+  sudo systemctl daemon-reload`;
+const encodedUserData = userDataScript.apply((data) =>
+  Buffer.from(data).toString("base64")
+);
+
+// Create Launch Template for Auto Scaling Group
+const launchTemplate = new aws.ec2.LaunchTemplate(
+  "webAppLaunchTemplate",
   {
-    zoneId: hostedZoneId,
-    name: domainName,
-    type: "A",
-    ttl: 300,
-    records: [eipAssociation.publicIp],
+    name: "webAppLaunchTemplate",
+    description: "Launch template for EC2 instances in the Auto Scaling Group",
+    imageId: amiInstance, // Your custom AMI
+    instanceType: "t2.micro",
+    keyName: keyPem, // Update with your key name
+    userData: encodedUserData, // Use existing user data
+    networkInterfaces: [
+      {
+        associatePublicIpAddress: "true",
+        securityGroups: [applicationSecurityGroup.id],
+      },
+    ],
+    iamInstanceProfile: {
+      arn: ec2InstanceProfile.arn,
+    },
   },
   { provider }
 );
 
+// Create Target Group
+const targetGroup = new aws.lb.TargetGroup("webAppTargetGroup", {
+  port: appPort, // Port on which your application listens
+  protocol: "HTTP",
+  targetType: "instance",
+  vpcId: vpc.id,
+  healthCheck: {
+    enabled: true,
+    interval: 60,
+    matcher: "200",
+    timeout: 30,
+    protocol: "HTTP",
+    port: "8080", // Health check port
+    path: "/healthz", // Health check path
+  },
+});
+
+// Create Auto Scaling Group
+const autoScalingGroup = new aws.autoscaling.Group(
+  "webAppAutoScalingGroup",
+  {
+    defaultCooldown: 60,
+    launchTemplate: {
+      id: launchTemplate.id,
+      version: "$Latest",
+    },
+    minSize: 1,
+    maxSize: 3,
+    desiredCapacity: 1,
+    vpcZoneIdentifiers: [firstPublicSubnet], // Use public subnets for instances
+    tags: [
+      {
+        key: "AutoScalingGroup",
+        value: "TagProperty",
+        propagateAtLaunch: true,
+      },
+      // Add any other necessary tags
+    ],
+    targetGroupArns: [targetGroup.arn],
+  },
+  { provider }
+);
+
+// Create Auto Scaling Policies
+const scaleUpPolicy = new aws.autoscaling.Policy(
+  "scaleUpPolicy",
+  {
+    adjustmentType: "ChangeInCapacity",
+    scalingAdjustment: 1,
+    cooldown: 60, // Adjust as needed
+    autoscalingGroupName: autoScalingGroup.name,
+    policyType: "SimpleScaling",
+    //estimatedInstanceWarmup: 300,
+  },
+  { provider }
+);
+
+const scaleDownPolicy = new aws.autoscaling.Policy(
+  "scaleDownPolicy",
+  {
+    adjustmentType: "ChangeInCapacity",
+    scalingAdjustment: -1,
+    cooldown: 60, // Adjust as needed
+    autoscalingGroupName: autoScalingGroup.name,
+    policyType: "SimpleScaling",
+  },
+  { provider }
+);
+
+// Create CloudWatch alarms to monitor CPU utilization
+const cpuAlarmHigh = new aws.cloudwatch.MetricAlarm(
+  "cpuAlarmHigh",
+  {
+    metricName: "CPUUtilization",
+    namespace: "AWS/EC2",
+    statistic: "Average",
+    period: 60,
+    evaluationPeriods: 1,
+    threshold: 5,
+    comparisonOperator: "GreaterThanThreshold",
+    alarmActions: [scaleUpPolicy.arn],
+    dimensions: {
+      AutoScalingGroupName: autoScalingGroup.name,
+    },
+  },
+  { provider }
+);
+
+const cpuAlarmLow = new aws.cloudwatch.MetricAlarm(
+  "cpuAlarmLow",
+  {
+    metricName: "CPUUtilization",
+    namespace: "AWS/EC2",
+    statistic: "Average",
+    period: 60,
+    evaluationPeriods: 1,
+    threshold: 3,
+    comparisonOperator: "LessThanThreshold",
+    alarmActions: [scaleDownPolicy.arn],
+    dimensions: {
+      AutoScalingGroupName: autoScalingGroup.name,
+    },
+  },
+  { provider }
+);
+
+// Create Application Load Balancer
+const loadBalancer = new aws.lb.LoadBalancer("webAppLoadBalancer", {
+  internal: false,
+  loadBalancerType: "application",
+  subnets: publicSubnetIds,
+  securityGroups: [loadBalancerSecurityGroup.id], // Use the load balancer security group
+  //subnets: [firstPublicSubnet], // Use public subnets for the load balancer
+  enableDeletionProtection: false, // Set as needed
+});
+
+// Create Listener for ALB
+const listener = new aws.lb.Listener("webAppListener", {
+  loadBalancerArn: loadBalancer.arn,
+  port: 80, // ALB listens on port 80 for incoming HTTP traffic
+  protocol: "HTTP",
+  defaultActions: [
+    {
+      type: "forward",
+      targetGroupArn: targetGroup.arn,
+    },
+  ],
+});
+
+// // Update Route 53 Record to point to the ALB
+// const record = new aws.route53.Record("webAppDnsRecord", {
+//   zoneId: hostedZoneId,
+//   name: domainName, // Your domain name
+//   type: "A",
+//   aliases: [
+//     {
+//       evaluateTargetHealth: true,
+//       name: domainName,
+//       zoneId: loadBalancer.zoneId,
+//     },
+//   ],
+// });
+
+const aRecord = loadBalancer.dnsName.apply((dnsName) => {
+  return new aws.route53.Record("demo.keerthanadevhub.me-A", {
+    zoneId: hostedZoneId,
+    name: domainName,
+    type: "A",
+    aliases: [
+      {
+        name: dnsName,
+        zoneId: loadBalancer.zoneId, // Load Balancer Zone ID
+        evaluateTargetHealth: true,
+      },
+    ],
+  });
+});
+
 // Export the IDs of the resources created
 export const vpcId = vpc.id;
-export const publicSubnetIds = subnets.apply((subnets) =>
-  subnets.filter((_, index) => index % 2 === 0).map((subnet) => subnet.id)
-);
+
 // export const privateSubnetIds = subnets.apply((subnets) =>
 //   subnets.filter((_, index) => index % 2 !== 0).map((subnet) => subnet.id)
 // );
