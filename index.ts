@@ -10,7 +10,9 @@ require("dotenv").config();
 const config = new pulumi.Config("pulumicloud");
 const awsConfig = new pulumi.Config("aws");
 const domain_name = "keerthanadevhub.me";
+
 const certificateArn = config.require("certificateArn");
+
 // Get the AWS profile from the config
 const awsProfile = awsConfig.require("profile");
 
@@ -760,7 +762,7 @@ const lambdaPermission = new aws.lambda.Permission("function-with-sns", {
   sourceArn: snsTopic.arn,
 });
 
-//-------------------GCP------------------
+
 
 // Export the IDs of the resources created
 export const vpcId = vpc.id;
