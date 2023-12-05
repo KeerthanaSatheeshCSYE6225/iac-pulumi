@@ -26,3 +26,7 @@ Before you begin, ensure you have met the following requirements:
    pulumi config set aws:region us-west-1
    pulumi up
    pulumicloud:vpcCidrBlock: "10.0.0.0/16"
+### aws acm import-certificate
+--certificate fileb://path/to/demo_keerthanadevhub_me.crt
+--certificate-chain fileb://path/to/demo_keerthanadevhub_me.ca-bundle
+--private-key fileb://path/to/mydemodomain.key
